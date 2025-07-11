@@ -33,52 +33,64 @@ public class CommentServiceImpl implements CommentService {
 
     @Override
     public List<CommentResponseDTO> getTopComments(String videoId) {
-        String url = String.format(
-                "%s/commentThreads?key=%s&textFormat=plainText&part=snippet&videoId=%s&maxResults=100",
-                baseUrl, apiKey, videoId.trim()
-        );
+        List<YouTubeComment> commentList = new ArrayList<>();
+        String pageToken = null;
 
         try {
-            // Fetch raw response
-            String response = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(response);
-            JsonNode items = root.get("items");
+            do {
+                String url = String.format(
+                        "%s/commentThreads?key=%s&textFormat=plainText&part=snippet&videoId=%s&maxResults=50%s",
+                        baseUrl, apiKey, videoId.trim(),
+                        pageToken != null ? "&pageToken=" + pageToken : ""
+                );
 
-            if (items == null || !items.isArray()) {
+                String response = restTemplate.getForObject(url, String.class);
+                JsonNode root = objectMapper.readTree(response);
+                JsonNode items = root.get("items");
+
+                if (items == null || !items.isArray()) {
+                    break;
+                }
+
+                for (JsonNode item : items) {
+                    try {
+                        JsonNode snippetNode = item.path("snippet");
+                        JsonNode topLevel = snippetNode.path("topLevelComment").path("snippet");
+                        if (topLevel.isMissingNode() || topLevel.isNull()) continue;
+
+                        YouTubeComment comment = new YouTubeComment();
+                        comment.setAuthor(topLevel.path("authorDisplayName").asText(""));
+                        comment.setText(topLevel.path("textDisplay").asText(""));
+                        comment.setLikeCount(topLevel.path("likeCount").asInt(0));
+                        comment.setReplyCount(snippetNode.path("totalReplyCount").asInt(0));
+                        commentList.add(comment);
+
+                        if (commentList.size() >= topCommentsLimit) {
+                            break; // stop if limit reached
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                if (commentList.size() >= topCommentsLimit) {
+                    break;
+                }
+
+                pageToken = root.path("nextPageToken").asText(null);
+
+            } while (pageToken != null && commentList.size() < topCommentsLimit);
+
+            if (commentList.isEmpty()) {
                 throw new VideoNotFoundException("No comments found or invalid video ID");
             }
 
-            // Parse comments
-            List<YouTubeComment> commentList = new ArrayList<>();
-            for (JsonNode item : items) {
-                try {
-                    JsonNode snippetNode = item.path("snippet");
-                    JsonNode topLevel = snippetNode.path("topLevelComment").path("snippet");
-                    if (topLevel.isMissingNode() || topLevel.isNull()) continue;
-
-                    YouTubeComment comment = new YouTubeComment();
-                    comment.setAuthor(topLevel.path("authorDisplayName").asText(""));
-                    String text = topLevel.path("textDisplay").asText("");
-                    comment.setText(text);
-                    comment.setLikeCount(topLevel.path("likeCount").asInt(0));
-                    comment.setReplyCount(snippetNode.path("totalReplyCount").asInt(0));
-                    commentList.add(comment);
-                } catch (Exception e) {
-                    // continue on faulty comment
-                    e.printStackTrace();
-                }
-            }
-
-            // Compute scores with weighted factors
-            List<CommentResponseDTO> scored = commentList.stream()
+            return commentList.stream()
                     .map(c -> {
                         int likes = c.getLikeCount();
                         int replies = c.getReplyCount();
                         int length = c.getText().length();
-                        // Weights: reply*2, length factor = length/50
-                        double score = likes
-                                + replies * 2
-                                + (double) length / 50;
+                        double score = likes + replies * 2 + (double) length / 50;
                         CommentResponseDTO dto = new CommentResponseDTO();
                         dto.setAuthor(c.getAuthor());
                         dto.setComment(c.getText());
@@ -91,7 +103,6 @@ public class CommentServiceImpl implements CommentService {
                     .limit(topCommentsLimit)
                     .collect(Collectors.toList());
 
-            return scored;
         } catch (Exception e) {
             e.printStackTrace();
             throw new VideoNotFoundException("Failed to fetch comments. Check video ID or API key.");
