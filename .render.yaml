@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: YTCommentRanker_Backend
+    env: java
+    buildCommand: "./mvnw clean package"
+    startCommand: "java -jar target/YTCommentRanker-0.0.1-SNAPSHOT.jar"
+    plan: free
+    region: singapore
