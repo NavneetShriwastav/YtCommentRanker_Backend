@@ -21,6 +21,9 @@ public class CommentServiceImpl implements CommentService {
     @Value("${youtube.api.base-url}")
     private String baseUrl;
 
+    @Value("${app.top.comments.return}")
+    private int topCommentsLimit;
+
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -85,7 +88,7 @@ public class CommentServiceImpl implements CommentService {
                         return dto;
                     })
                     .sorted(Comparator.comparingInt(CommentResponseDTO::getScore).reversed())
-                    .limit(10)
+                    .limit(topCommentsLimit)
                     .collect(Collectors.toList());
 
             return scored;
